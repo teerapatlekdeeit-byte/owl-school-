@@ -1,0 +1,182 @@
+name: Build Owl School APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create Android project
+        run: |
+          mkdir -p android/app/src/main/java/com/owlschool/app android/app/src/main/assets
+          cp index.html android/app/src/main/assets/index.html
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            mkdir -p android/app/src/main/res/mipmap-$d
+            cp icon.png android/app/src/main/res/mipmap-$d/ic_launcher.png
+          done
+          mkdir -p android/app/src/main/res/mipmap-anydpi-v26 android/app/src/main/res/values android/app/src/main/res/mipmap-xxxhdpi
+          cp foreground.png android/app/src/main/res/mipmap-xxxhdpi/ic_foreground.png
+          cat > android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'X7'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_bg" />
+              <foreground android:drawable="@mipmap/ic_foreground" />
+          </adaptive-icon>
+          X7
+          cat > android/app/src/main/res/values/colors.xml <<'X8'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="ic_bg">#5AA9FF</color>
+          </resources>
+          X8
+          cd android
+          cat > settings.gradle <<'X1'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "OwlSchool"
+          include ':app'
+          X1
+          cat > build.gradle <<'X2'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          X2
+          cat > gradle.properties <<'X3'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=false
+          android.nonTransitiveRClass=true
+          X3
+          cat > app/build.gradle <<'X4'
+          plugins {
+              id 'com.android.application'
+          }
+          android {
+              namespace 'com.owlschool.app'
+              compileSdk 34
+              defaultConfig {
+                  applicationId "com.owlschool.app"
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 19
+                  versionName "1.19.0 beta"
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          X4
+          cat > app/src/main/AndroidManifest.xml <<'X5'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+              <application
+                  android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="Owl School"
+                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|keyboardHidden|screenLayout">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          X5
+          cat > app/src/main/java/com/owlschool/app/MainActivity.java <<'X6'
+          package com.owlschool.app;
+
+          import android.Manifest;
+          import android.app.Activity;
+          import android.content.pm.PackageManager;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.webkit.PermissionRequest;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+
+          public class MainActivity extends Activity {
+              private WebView web;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  if (Build.VERSION.SDK_INT >= 23
+                          && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                      requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 1);
+                  }
+                  web = new WebView(this);
+                  setContentView(web);
+                  WebSettings s = web.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  s.setMediaPlaybackRequiresUserGesture(false);
+                  s.setAllowFileAccess(true);
+                  web.setWebViewClient(new WebViewClient());
+                  web.setWebChromeClient(new WebChromeClient() {
+                      @Override
+                      public void onPermissionRequest(final PermissionRequest request) {
+                          runOnUiThread(new Runnable() {
+                              @Override
+                              public void run() {
+                                  request.grant(request.getResources());
+                              }
+                          });
+                      }
+                  });
+                  web.loadUrl("file:///android_asset/index.html");
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (web != null && web.canGoBack()) {
+                      web.goBack();
+                  } else {
+                      super.onBackPressed();
+                  }
+              }
+          }
+          X6
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build APK
+        working-directory: android
+        run: gradle assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OwlSchool-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
